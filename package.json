@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@types/node": "^24.10.1",
+    "micromark": "^4.0.2",
+    "mongodb": "^7.0.0"
+  }
+}
