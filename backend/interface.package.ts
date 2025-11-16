@@ -2,7 +2,6 @@ export interface Package {
     owner_id: number;
     owner_name: string;
     id: string;
-    size: number;
     compressed_size: number;
     contains_files: number;
     name: string;

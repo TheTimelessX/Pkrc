@@ -376,12 +376,14 @@ export class UserDatabase {
 }
 
 export class PackageDatabase {
-    private udb: UserDatabase;
+    public udb: UserDatabase;
     private packageNameRegex: RegExp;
     
     constructor(){
       this.udb = new UserDatabase();
       this.packageNameRegex = /^[A-Za-z0-9._()\-]+$/;
+      this.udb.connect();
+      this.udb.packages.connect();
     }
 
     async isMarkdown(input: string): Promise<boolean> {
@@ -406,8 +408,35 @@ export class PackageDatabase {
           return callback({ status: false, message: "invalid users name" });
         }
 
+        const _found_packs: Package[] = [];
+
         for (const pack of user.packages){
           if (pack.name === package_name){
+            //return callback({ status: true, package: pack });
+            _found_packs.push(pack);
+          }
+        }
+
+        const _all_versions = _found_packs.map(pck => pck.version);
+        const _late_version = getLatestVersion(_all_versions);
+        if (!_late_version){
+          return callback({ status: false, message: "package not found for this user" });
+        } else {
+          return callback({ status: false, package: _found_packs.find(pck => pck.version === _late_version)! });
+        }        
+      })
+    }
+
+    async getPackageByOwnerNameAndPackageNameAndVersion(owner_name: string, package_name: string, version: string, callback: (pack: any) => void){
+      await this.udb.getUserByName(owner_name, async (user) => {
+        if (!user){
+          return callback({ status: false, message: "invalid users name" });
+        }
+
+        console.log(user)
+
+        for (const pack of user.packages){
+          if (pack.name === package_name && pack.version === version){
             return callback({ status: true, package: pack });
           }
         }
@@ -455,9 +484,16 @@ export class PackageDatabase {
             }
 
             const _pack: Package = { ...pack, id: randomUUID(), owner_name: user.name, owner_id: user.id };
+            const _packs: string[] = user.packages.map(__pack => __pack.id);
 
             await this.udb.packages.collection().insertOne({ ..._pack }).then(async () => {
-              return callback({ status: true, package: _pack });
+              _packs.push(_pack.id);
+              await this.udb.collection().updateOne({ id: user.id }, { $set: { packages: _packs } }).then(async () => {
+                return callback({ status: true, package: _pack });
+              }).catch(async (e) => {
+                console.error(e);
+                return callback({ status: false, message: "local server error", error: e instanceof Error ? e.message : e });
+              })
             }).catch(async (e) => {
               console.error(e);
               return callback({ status: false, message: "local server error", error: e instanceof Error ? e.message : e });
@@ -466,7 +502,7 @@ export class PackageDatabase {
       })
     }
 
-    async editPackage(auth: string, pack_id: string, pack: { description?: string, type: "public" | "private" }, callback: (data: any) => void){
+    async editPackage(auth: string, pack_id: string, pack: { description?: string, type?: "public" | "private" }, callback: (data: any) => void){
       await this.udb.getUserByAuth(auth, async (theuser) => {
         if (!theuser){
           return callback({ status: false, message: "auth not found" });
@@ -488,6 +524,8 @@ export class PackageDatabase {
           if (!_pack){
             return callback({ status: false, message: "package not found" });
           }
+
+          pack.type = pack.type ?? _pack.type
 
           const _updated_package: Package = { ..._pack, ...pack };
 
@@ -512,8 +550,21 @@ export class PackageDatabase {
             return callback({ status: false, message: "package not found" });
           }
 
+          const _packs: string[] = theuser.packages.map(pcks => pcks.id);
+
+          if (_packs.includes(_pack.id)){
+            _packs.splice(_packs.indexOf(_pack.id));
+          } else {
+            return callback({ status: false, message: "package is not in users storage" });
+          }
+
           await this.udb.packages.collection().deleteOne({ id: _pack.id }).then(async () => {
-            return callback({ status: true });
+            await this.udb.collection().updateOne({ id: theuser.id }, { $set: { packages: _packs } }).then(async () => {
+              return callback({ status: true });
+            }).catch(async (e) => {
+              console.error(e);
+              return callback({ status: false, message: "local server error", error: e instanceof Error ? e.message : e });
+            })
           }).catch(async (e) => {
             console.error(e);
             return callback({ status: false, message: "local server error", error: e instanceof Error ? e.message : e });
@@ -521,4 +572,17 @@ export class PackageDatabase {
         })
       })
     }
+}
+
+function getLatestVersion(versions: string[]): string {
+  return versions.sort((a, b) => {
+    const aParts = a.split('.').map(Number);
+    const bParts = b.split('.').map(Number);
+
+    for (let i = 0; i < 3; i++) {
+      if (aParts[i] > bParts[i]) return -1; // a is newer
+      if (aParts[i] < bParts[i]) return 1;  // b is newer
+    }
+    return 0; // equal
+  })[0];
 }
